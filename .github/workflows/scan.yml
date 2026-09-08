@@ -2,7 +2,7 @@ name: FareHunter Daily Scan
 
 on:
   schedule:
-    - cron: "0 1 * * *"   # 1 AM UTC every day
+    - cron: "7 1 * * *"   # 01:07 UTC every day — off the round hour to dodge GitHub's cron-queue congestion at :00
   workflow_dispatch:
     inputs:
       route:
