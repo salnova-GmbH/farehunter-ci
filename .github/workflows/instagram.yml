@@ -1,0 +1,84 @@
+name: FareHunter Instagram Autopilot
+
+# Posts due items from social/instagram/queue/ (private repo) to @farehunter.ch via
+# the Instagram API. Items are produced elsewhere — the Deal-of-the-Week carousel by
+# blog.yml (Tuesdays), whose slides are deployed to farehunter.ch/ig/… because the API
+# only accepts public image URLs. At most one post per run; stale items expire instead
+# of being posted late. See social/instagram/STRATEGY.md in the private repo.
+#
+# Secrets: IG_ACCESS_TOKEN (long-lived Instagram-Login token; without it the job is a
+# no-op), optional IG_USER_ID, optional IG_SECRETS_PAT (fine-grained PAT on THIS repo,
+# "Secrets: Read and write") so the Monday run can refresh the 60-day token itself.
+
+on:
+  schedule:
+    - cron: "17 10 * * *"   # daily 10:17 UTC — off the round hour (see scan.yml)
+  workflow_dispatch: {}
+
+concurrency:
+  group: farehunter-instagram
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout private FareHunter repo (social/ only)
+        uses: actions/checkout@v7
+        with:
+          repository: salnova-GmbH/FareHunter
+          token: ${{ secrets.FAREHUNTER_PAT }}
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/*/
+            social/
+          sparse-checkout-cone-mode: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Publish due post
+        shell: bash   # -o pipefail, so a failed publish still fails the step through tee
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+        run: python social/instagram/scripts/publish_instagram.py | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Long-lived tokens expire after 60 days unless refreshed; refreshing weekly
+      # and storing the result back as the secret keeps the autopilot running forever.
+      - name: Refresh access token (Mondays)
+        if: always() && github.event_name == 'schedule'
+        env:
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.IG_SECRETS_PAT }}
+        run: |
+          if [ "$(date -u +%u)" != "1" ]; then echo "Not Monday, no refresh."; exit 0; fi
+          if [ -z "$IG_ACCESS_TOKEN" ] || [ -z "$GH_TOKEN" ]; then
+            echo "::warning::IG_ACCESS_TOKEN or IG_SECRETS_PAT not set; token not refreshed (it expires 60 days after it was issued)."
+            exit 0
+          fi
+          python social/instagram/scripts/publish_instagram.py --refresh-token "$RUNNER_TEMP/ig_token"
+          echo "::add-mask::$(cat "$RUNNER_TEMP/ig_token")"
+          gh secret set IG_ACCESS_TOKEN --repo "$GITHUB_REPOSITORY" < "$RUNNER_TEMP/ig_token"
+          rm -f "$RUNNER_TEMP/ig_token"
+
+      - name: Commit queue status
+        if: always()
+        run: |
+          if ! git status --porcelain social/instagram/queue | grep -q .; then exit 0; fi
+          git config user.name  "FareHunter Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A social/instagram/queue/
+          git commit -m "social: instagram queue $(date -u +'%Y-%m-%d %H:%M') UTC"
+          for i in {1..6}; do
+            git pull --rebase && git push && break
+            echo "Push attempt $i failed, retrying..."
+            sleep $((RANDOM % 15 + 5))
+          done

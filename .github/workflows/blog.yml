@@ -4,6 +4,7 @@ name: FareHunter Weekly Blog Post
 # scan.yml/ultra.yml (same reasoning as their split: triggering one must not
 # kick off the others) — scheduled well after scan.yml's daily 1 AM UTC run,
 # which takes ~2-3h, so deals/*.json is fresh by the time this runs.
+# Also renders the matching Instagram carousel (posted later by instagram.yml).
 
 on:
   schedule:
@@ -47,6 +48,7 @@ jobs:
             deals/
             public/
             public-web/
+            social/
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.12
@@ -87,6 +89,15 @@ jobs:
         if: steps.check.outputs.new_post == 'true'
         run: npm ci
 
+      # Instagram carousel for the same deal (German, 6 slides): slides land in
+      # public/ig/<slug>-deal/ so this build deploys them (the Instagram API only
+      # takes public image URLs), plus a queue item that instagram.yml posts at
+      # 10:17 UTC. Never blocks the blog post itself.
+      - name: Render Instagram carousel
+        if: steps.check.outputs.new_post == 'true'
+        continue-on-error: true
+        run: node social/instagram/scripts/deal-carousel.mjs --web
+
       # public-web/dist/ is committed — Cloudflare serves it as-is and does
       # not build (see CLAUDE.md "Web app"), so the new post is invisible on
       # the live site until this runs and its output is committed below.
@@ -100,6 +111,9 @@ jobs:
           git config user.name  "FareHunter Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/content/blog/ public-web/dist/
+          # separate calls: a missing path (no carousel rendered) must not stop the other
+          git add -A social/instagram/queue/ 2>/dev/null || true
+          git add -A public/ig/ 2>/dev/null || true
           git commit -m "content: weekly deal post $(date -u +'%Y-%m-%d')"
           for i in {1..6}; do
             git pull --rebase && git push && break

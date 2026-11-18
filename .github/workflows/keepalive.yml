@@ -22,7 +22,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          for wf in scan.yml ultra.yml bundle.yml blog.yml keepalive.yml; do
+          for wf in scan.yml ultra.yml bundle.yml blog.yml instagram.yml keepalive.yml; do
             gh api -X PUT "repos/$REPO/actions/workflows/$wf/enable" \
               && echo "enabled $wf"
           done
