@@ -2,8 +2,9 @@ name: FareHunter Instagram Autopilot
 
 # Posts due items from social/instagram/queue/ (private repo) to @farehunter.ch via
 # the Instagram API. Items are produced elsewhere — the Deal-of-the-Week carousel by
-# blog.yml (Tuesdays), whose slides are deployed to farehunter.ch/ig/… because the API
-# only accepts public image URLs. At most one post per run; stale items expire instead
+# blog.yml (Tuesdays) and the cabin carousel/Reel by social.yml (Wednesdays, for
+# Thursday) — whose media are deployed to farehunter.ch/ig/… because the API only
+# accepts public URLs. At most one post per run; stale items expire instead
 # of being posted late. See social/instagram/STRATEGY.md in the private repo.
 #
 # Secrets: IG_ACCESS_TOKEN (long-lived Instagram-Login token; without it the job is a
@@ -12,7 +13,8 @@ name: FareHunter Instagram Autopilot
 
 on:
   schedule:
-    - cron: "17 10 * * *"   # daily 10:17 UTC — off the round hour (see scan.yml)
+    - cron: "17 10 * * *"   # daily 10:17 UTC: Tuesday deal carousel (lunch slot)
+    - cron: "17 17 * * *"   # daily 17:17 UTC: Thursday cabin post (evening slot)
   workflow_dispatch: {}
 
 concurrency:
@@ -27,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout private FareHunter repo (social/ only)
+      - name: Checkout private FareHunter repo (queue + scripts only, not the photo library)
         uses: actions/checkout@v7
         with:
           repository: salnova-GmbH/FareHunter
@@ -36,7 +38,8 @@ jobs:
           sparse-checkout: |
             /*
             !/*/
-            social/
+            social/instagram/scripts/
+            social/instagram/queue/
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.12
@@ -54,7 +57,8 @@ jobs:
       # Long-lived tokens expire after 60 days unless refreshed; refreshing weekly
       # and storing the result back as the secret keeps the autopilot running forever.
       - name: Refresh access token (Mondays)
-        if: always() && github.event_name == 'schedule'
+        # morning run only: a token must be ≥24 h old to refresh, so a second refresh the same day fails
+        if: always() && github.event.schedule == '17 10 * * *'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           GH_TOKEN: ${{ secrets.IG_SECRETS_PAT }}
