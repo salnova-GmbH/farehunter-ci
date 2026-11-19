@@ -7,9 +7,11 @@ name: FareHunter Instagram Autopilot
 # accepts public URLs. At most one post per run; stale items expire instead
 # of being posted late. See social/instagram/STRATEGY.md in the private repo.
 #
-# Secrets: IG_ACCESS_TOKEN (long-lived Instagram-Login token; without it the job is a
-# no-op), optional IG_USER_ID, optional IG_SECRETS_PAT (fine-grained PAT on THIS repo,
-# "Secrets: Read and write") so the Monday run can refresh the 60-day token itself.
+# Secrets: IG_ACCESS_TOKEN (without it the job is a no-op) and IG_USER_ID (Instagram
+# account id). Default is Meta's Unified Login (graph.facebook.com, system-user token).
+# Older Instagram-Login setup: also IG_GRAPH_BASE=https://graph.instagram.com and
+# IG_SECRETS_PAT (fine-grained PAT on THIS repo, "Secrets: Read and write") so the
+# Monday run can refresh the 60-day token itself.
 
 on:
   schedule:
@@ -52,23 +54,30 @@ jobs:
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_GRAPH_BASE: ${{ secrets.IG_GRAPH_BASE }}   # empty = Unified Login (graph.facebook.com)
         run: python social/instagram/scripts/publish_instagram.py | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Long-lived tokens expire after 60 days unless refreshed; refreshing weekly
-      # and storing the result back as the secret keeps the autopilot running forever.
+      # Only for the older Instagram-Login setup (IG_GRAPH_BASE=https://graph.instagram.com):
+      # those tokens expire after 60 days unless refreshed, so the weekly refresh is stored
+      # back as the secret. Unified-Login tokens get their expiry from the Meta login
+      # configuration ("never" recommended) and the script no-ops.
       - name: Refresh access token (Mondays)
         # morning run only: a token must be ≥24 h old to refresh, so a second refresh the same day fails
         if: always() && github.event.schedule == '17 10 * * *'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          IG_GRAPH_BASE: ${{ secrets.IG_GRAPH_BASE }}
           GH_TOKEN: ${{ secrets.IG_SECRETS_PAT }}
         run: |
           if [ "$(date -u +%u)" != "1" ]; then echo "Not Monday, no refresh."; exit 0; fi
-          if [ -z "$IG_ACCESS_TOKEN" ] || [ -z "$GH_TOKEN" ]; then
-            echo "::warning::IG_ACCESS_TOKEN or IG_SECRETS_PAT not set; token not refreshed (it expires 60 days after it was issued)."
+          if [ -z "$IG_ACCESS_TOKEN" ]; then echo "No token, autopilot off."; exit 0; fi
+          python social/instagram/scripts/publish_instagram.py --refresh-token "$RUNNER_TEMP/ig_token"
+          if [ ! -s "$RUNNER_TEMP/ig_token" ]; then exit 0; fi   # Unified Login: nothing to store
+          if [ -z "$GH_TOKEN" ]; then
+            rm -f "$RUNNER_TEMP/ig_token"
+            echo "::warning::IG_SECRETS_PAT not set; refreshed token not stored (Instagram-Login token expires 60 days after it was issued)."
             exit 0
           fi
-          python social/instagram/scripts/publish_instagram.py --refresh-token "$RUNNER_TEMP/ig_token"
           echo "::add-mask::$(cat "$RUNNER_TEMP/ig_token")"
           gh secret set IG_ACCESS_TOKEN --repo "$GITHUB_REPOSITORY" < "$RUNNER_TEMP/ig_token"
           rm -f "$RUNNER_TEMP/ig_token"
