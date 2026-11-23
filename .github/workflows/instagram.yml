@@ -2,9 +2,9 @@ name: FareHunter Instagram Autopilot
 
 # Posts due items from social/instagram/queue/ (private repo) to @farehunter.ch via
 # the Instagram API. Items are produced elsewhere — the Deal-of-the-Week carousel by
-# blog.yml (Tuesdays) and the cabin carousel/Reel by social.yml (Wednesdays, for
-# Thursday) — whose media are deployed to farehunter.ch/ig/… because the API only
-# accepts public URLs. At most one post per run; stale items expire instead
+# blog.yml (Tuesdays), the cabin carousel/Reel by social.yml (Wednesdays, for Thursday)
+# and the data carousel by social.yml (Saturdays, for Sunday) — whose media are deployed
+# to farehunter.ch/ig/… because the API only accepts public URLs. At most one post per run; stale items expire instead
 # of being posted late. See social/instagram/STRATEGY.md in the private repo.
 #
 # Secrets: IG_ACCESS_TOKEN (without it the job is a no-op) and IG_USER_ID (Instagram
@@ -16,7 +16,7 @@ name: FareHunter Instagram Autopilot
 on:
   schedule:
     - cron: "17 10 * * *"   # daily 10:17 UTC: Tuesday deal carousel (lunch slot)
-    - cron: "17 17 * * *"   # daily 17:17 UTC: Thursday cabin post (evening slot)
+    - cron: "17 17 * * *"   # daily 17:17 UTC: Thursday cabin + Sunday data post (evening slot)
   workflow_dispatch: {}
 
 concurrency:

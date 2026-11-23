@@ -1,17 +1,29 @@
 name: FareHunter Social Content
 
-# Renders the weekly Thursday "Kabinen-Check" for Instagram (photo carousel in even
-# ISO weeks, faceless Reel in odd weeks) from the photo library committed in the
-# private repo (social/instagram/library/, synced from OneDrive by hand), tied to the
-# cheapest current deal on the same airline. Output goes to public/ig/<id>/ (deployed,
-# because the Instagram API only takes public URLs) plus a queue item; instagram.yml
-# posts it Thursday 17:17 UTC. Separate from blog.yml so a week without a new blog
-# post still gets its cabin post.
+# Renders the generated Instagram posts (German) and queues them for instagram.yml:
+# - Wednesdays → Thursday "Kabinen-Check" (cabin-post.mjs): photo carousel in even ISO
+#   weeks, faceless Reel in odd weeks, from the photo library committed in the private
+#   repo (social/instagram/library/, synced from OneDrive by hand), tied to the cheapest
+#   current deal on the same airline. Posted Thursday 17:17 UTC.
+# - Saturdays → Sunday "FareHunter-Daten" (data-post.mjs): cheapest departure airport
+#   for a destination (odd weeks) or cheapest departure month for a route (even weeks),
+#   from the last 14 days of price history in data/. Posted Sunday 17:17 UTC.
+# Output goes to public/ig/<id>/ (deployed, because the Instagram API only takes public
+# URLs) plus a queue item. Separate from blog.yml so a week without a new blog post
+# still gets its posts.
 
 on:
   schedule:
     - cron: "37 6 * * 3"   # Wednesdays 06:37 UTC — off the round hour (see scan.yml)
-  workflow_dispatch: {}
+    - cron: "37 6 * * 6"   # Saturdays 06:37 UTC
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "cabin (Thursday post) or data (Sunday post)"
+        required: true
+        default: cabin
+        type: choice
+        options: [cabin, data]
 
 concurrency:
   group: farehunter-social
@@ -25,9 +37,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Which post
+        id: kind
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then kind="${{ inputs.kind }}";
+          elif [ "${{ github.event.schedule }}" = "37 6 * * 6" ]; then kind=data; else kind=cabin; fi
+          echo "kind=$kind" >> "$GITHUB_OUTPUT"
+          echo "Rendering: $kind" >> "$GITHUB_STEP_SUMMARY"
+
       # Same build inputs as blog.yml (src/, public/, public-web/ — omitting public/
       # makes the build delete every static asset from dist/, see CLAUDE.md) plus
-      # deals/ (deal matching) and social/ (library, scripts, queue).
+      # deals/ (deal matching) and social/ (library, scripts, queue, audio). data/ is
+      # ~2.5 GB, so the data post adds only the route files it needs (step below).
       - name: Checkout private FareHunter repo
         uses: actions/checkout@v7
         with:
@@ -54,13 +75,23 @@ jobs:
         run: npm ci
 
       - name: Install ffmpeg
+        if: steps.kind.outputs.kind == 'cabin'
         run: command -v ffmpeg || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg)
 
-      - name: Render cabin post
+      - name: Fetch price history for this week's topic
+        if: steps.kind.outputs.kind == 'data'
+        run: |
+          files=$(node social/instagram/scripts/data-post.mjs --plan)
+          echo "data files: $files"
+          git sparse-checkout add $files
+
+      - name: Render post
         id: render
         shell: bash   # -o pipefail: a failing generator must fail the step despite tee
         run: |
-          node social/instagram/scripts/cabin-post.mjs --web | tee -a "$GITHUB_STEP_SUMMARY"
+          script=cabin-post.mjs
+          [ "${{ steps.kind.outputs.kind }}" = "data" ] && script=data-post.mjs
+          node "social/instagram/scripts/$script" --web | tee -a "$GITHUB_STEP_SUMMARY"
           if git status --porcelain social/instagram/queue public/ig | grep -q .; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
@@ -75,7 +106,7 @@ jobs:
           git config user.name  "FareHunter Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A social/instagram/queue/ public/ig/ public-web/dist/
-          git commit -m "social: weekly cabin post $(date -u +'%Y-%m-%d')"
+          git commit -m "social: ${{ steps.kind.outputs.kind }} post $(date -u +'%Y-%m-%d')"
           for i in {1..6}; do
             git pull --rebase && git push && break
             echo "Push attempt $i failed, retrying..."
