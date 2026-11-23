@@ -10,7 +10,9 @@ name: FareHunter Social Content
 #   from the last 14 days of price history in data/. Posted Sunday 17:17 UTC.
 # Output goes to public/ig/<id>/ (deployed, because the Instagram API only takes public
 # URLs) plus a queue item. Separate from blog.yml so a week without a new blog post
-# still gets its posts.
+# still gets its posts. A run that GitHub starts late (even on the slot day itself)
+# still targets this week's slot. Manual dispatch with "now" queues the post as due
+# immediately (catch-up for a missed slot); instagram.yml posts it within the hour.
 
 on:
   schedule:
@@ -24,6 +26,11 @@ on:
         default: cabin
         type: choice
         options: [cabin, data]
+      now:
+        description: "Sofort posten (Nachholen): fällig ab jetzt statt am nächsten Donnerstag/Sonntag"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: farehunter-social
@@ -81,7 +88,8 @@ jobs:
       - name: Fetch price history for this week's topic
         if: steps.kind.outputs.kind == 'data'
         run: |
-          files=$(node social/instagram/scripts/data-post.mjs --plan)
+          now_flag=""; [ "${{ inputs.now }}" = "true" ] && now_flag="--now"
+          files=$(node social/instagram/scripts/data-post.mjs --plan $now_flag)
           echo "data files: $files"
           git sparse-checkout add $files
 
@@ -91,7 +99,9 @@ jobs:
         run: |
           script=cabin-post.mjs
           [ "${{ steps.kind.outputs.kind }}" = "data" ] && script=data-post.mjs
-          node "social/instagram/scripts/$script" --web | tee -a "$GITHUB_STEP_SUMMARY"
+          flags="--web"
+          [ "${{ inputs.now }}" = "true" ] && flags="$flags --now"
+          node "social/instagram/scripts/$script" $flags | tee -a "$GITHUB_STEP_SUMMARY"
           if git status --porcelain social/instagram/queue public/ig | grep -q .; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
