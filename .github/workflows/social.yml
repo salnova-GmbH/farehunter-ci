@@ -31,6 +31,12 @@ on:
         required: false
         default: false
         type: boolean
+      format:
+        description: "Nur Kabinen-Post: auto (Wochenrhythmus), carousel oder reel"
+        required: false
+        default: auto
+        type: choice
+        options: [auto, carousel, reel]
 
 concurrency:
   group: farehunter-social
@@ -101,6 +107,8 @@ jobs:
           [ "${{ steps.kind.outputs.kind }}" = "data" ] && script=data-post.mjs
           flags="--web"
           [ "${{ inputs.now }}" = "true" ] && flags="$flags --now"
+          fmt="${{ inputs.format }}"
+          [ "$script" = "cabin-post.mjs" ] && [ -n "$fmt" ] && [ "$fmt" != "auto" ] && flags="$flags --format $fmt"
           node "social/instagram/scripts/$script" $flags | tee -a "$GITHUB_STEP_SUMMARY"
           if git status --porcelain social/instagram/queue public/ig | grep -q .; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
