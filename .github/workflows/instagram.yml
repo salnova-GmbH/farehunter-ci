@@ -15,8 +15,12 @@ name: FareHunter Instagram Autopilot
 
 on:
   schedule:
-    - cron: "17 10 * * *"   # daily 10:17 UTC: Tuesday deal carousel (lunch slot)
-    - cron: "17 17 * * *"   # daily 17:17 UTC: Thursday cabin + Sunday data post (evening slot)
+    # Hourly: GitHub starts scheduled runs of this public repo 5–8 h late (measured
+    # 2026-11-19..22: 10:17 → ~18:00, 17:17 → ~22:30). With a run every hour, a due post
+    # still goes out within ~1 h of its slot. A run with nothing due takes <1 min and
+    # makes no commit.
+    - cron: "47 * * * *"
+    - cron: "17 10 * * 1"   # Mondays: also the token-refresh run (older Instagram-Login setup only)
   workflow_dispatch: {}
 
 concurrency:
@@ -62,8 +66,8 @@ jobs:
       # back as the secret. Unified-Login tokens get their expiry from the Meta login
       # configuration ("never" recommended) and the script no-ops.
       - name: Refresh access token (Mondays)
-        # morning run only: a token must be ≥24 h old to refresh, so a second refresh the same day fails
-        if: always() && github.event.schedule == '17 10 * * *'
+        # the Monday cron only (not the hourly runs): a token must be ≥24 h old to refresh, so a second refresh the same day fails
+        if: always() && github.event.schedule == '17 10 * * 1'
         env:
           IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
           IG_GRAPH_BASE: ${{ secrets.IG_GRAPH_BASE }}
