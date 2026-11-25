@@ -68,7 +68,7 @@ jobs:
       - name: Add this job's route files to the sparse checkout
         run: |
           for R in ${{ join(matrix.routes, ' ') }}; do
-            git sparse-checkout add "data/$R.json" "deals/$R.json" "skips/$R.json" "scans/$R"
+            git sparse-checkout add "data/$R.json" "deals/$R.json" "skips/$R.json" "stats/$R.json" "scans/$R"
           done
 
       - name: Set up Python 3.12
@@ -101,7 +101,7 @@ jobs:
 
       - name: Run FareHunter — ${{ join(matrix.routes, ' ') }}
         run: |
-          mkdir -p data deals skips   # sparse checkout omits them if a route is new
+          mkdir -p data deals skips stats   # sparse checkout omits them if a route is new
           FAILED=""
           for R in ${{ join(matrix.routes, ' ') }}; do
             echo "::group::Scan $R"
@@ -188,6 +188,7 @@ jobs:
             [ -f "data/$R.json" ]  && git add "data/$R.json"  || true
             [ -f "deals/$R.json" ] && git add "deals/$R.json" || true
             [ -f "skips/$R.json" ] && git add "skips/$R.json" || true
+            [ -f "stats/$R.json" ] && git add "stats/$R.json" || true   # price stats for /business-class/ pages
           done
           [ -d scans ] && git add scans/ || true
           if git diff --staged --quiet; then

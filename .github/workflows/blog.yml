@@ -22,7 +22,7 @@ jobs:
   publish:
     name: Generate & publish weekly deal post
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40   # incl. up to 15 min waiting for the Cloudflare deploy before IndexNow
     steps:
       # Needs deals/*.json (deal selection), src/content/blog/ (dedup state
       # + the post itself), the rest of src/ + root config (full Astro
@@ -32,7 +32,9 @@ jobs:
       # doesn't just mean missing images, it means npm run build silently
       # produces a dist/ with those files DELETED, and committing that
       # wipes them off the live site), and public-web/ (build output + the
-      # files Cloudflare doesn't build). Not data/, skips/, scans/ — the
+      # files Cloudflare doesn't build), and stats/ (per-route price
+      # summaries written by every scan job, ~1.6 MB — the data behind the
+      # /business-class/ destination pages). Not data/, skips/, scans/ — the
       # multi-GB history this job never touches.
       - name: Checkout private FareHunter repo
         uses: actions/checkout@v7
@@ -49,6 +51,7 @@ jobs:
             public/
             public-web/
             social/
+            stats/
           sparse-checkout-cone-mode: false
 
       - name: Set up Python 3.12
@@ -68,6 +71,13 @@ jobs:
       - name: Select this week's deal
         run: python scripts/generate_blog_post.py
 
+      # Weekly refresh of the /business-class/ destination pages: typical
+      # prices from stats/*.json + live deal counts → src/data/destination-stats.json.
+      # A failure keeps last week's file (the pages just show older numbers).
+      - name: Refresh destination stats
+        continue-on-error: true
+        run: python scripts/build_destination_stats.py
+
       - name: Check whether a new post was written
         id: check
         run: |
@@ -75,18 +85,24 @@ jobs:
             echo "new_post=true" >> "$GITHUB_OUTPUT"
           else
             echo "new_post=false" >> "$GITHUB_OUTPUT"
-            echo "No eligible deal this week (all remaining destinations still in their 6-week cooldown, or no deals at all) — nothing to publish." >> "$GITHUB_STEP_SUMMARY"
+            echo "No eligible deal this week (all remaining destinations still in their 6-week cooldown, or no deals at all) — no new post." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if git status --porcelain src/content/blog src/data/destination-stats.json | grep -q .; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Destination stats unchanged too — nothing to build." >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Set up Node.js
-        if: steps.check.outputs.new_post == 'true'
+        if: steps.check.outputs.build == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
 
       - name: Install Node dependencies
-        if: steps.check.outputs.new_post == 'true'
+        if: steps.check.outputs.build == 'true'
         run: npm ci
 
       # Instagram carousel for the same deal (German, 6 slides): slides land in
@@ -102,21 +118,34 @@ jobs:
       # not build (see CLAUDE.md "Web app"), so the new post is invisible on
       # the live site until this runs and its output is committed below.
       - name: Build site
-        if: steps.check.outputs.new_post == 'true'
+        if: steps.check.outputs.build == 'true'
         run: npm run build
 
-      - name: Commit new post + rebuilt dist
-        if: steps.check.outputs.new_post == 'true'
+      - name: Commit new post / destination stats + rebuilt dist
+        if: steps.check.outputs.build == 'true'
         run: |
           git config user.name  "FareHunter Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/content/blog/ public-web/dist/
+          git add src/content/blog/ src/data/destination-stats.json public-web/dist/
           # separate calls: a missing path (no carousel rendered) must not stop the other
           git add -A social/instagram/queue/ 2>/dev/null || true
           git add -A public/ig/ 2>/dev/null || true
-          git commit -m "content: weekly deal post $(date -u +'%Y-%m-%d')"
+          # Pages this build changed, for IndexNow below.
+          git diff --cached --name-only --diff-filter=AMR -- 'public-web/dist/*.html' > "$RUNNER_TEMP/changed-pages.txt"
+          if [ "${{ steps.check.outputs.new_post }}" = "true" ]; then
+            git commit -m "content: weekly deal post $(date -u +'%Y-%m-%d')"
+          else
+            git commit -m "content: weekly destination stats $(date -u +'%Y-%m-%d')"
+          fi
           for i in {1..6}; do
             git pull --rebase && git push && break
             echo "Push attempt $i failed, retrying..."
             sleep $((RANDOM % 15 + 5))
           done
+
+      # Tell Bing & co. (IndexNow) which indexable pages changed, once the
+      # Cloudflare deploy this push started is live. Only sitemap URLs are sent.
+      - name: Submit changed pages to IndexNow
+        if: steps.check.outputs.build == 'true'
+        continue-on-error: true
+        run: node scripts/indexnow.mjs --from-file "$RUNNER_TEMP/changed-pages.txt" --wait
