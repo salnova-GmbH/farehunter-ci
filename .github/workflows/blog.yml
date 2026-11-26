@@ -9,7 +9,13 @@ name: FareHunter Weekly Blog Post
 on:
   schedule:
     - cron: "0 6 * * 2"   # Tuesdays, 06:00 UTC
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "post = pick this week's deal (default). rebuild = no new post, just build and deploy the site (e.g. after adding a `note:` to a post in GitHub)."
+        type: choice
+        options: [post, rebuild]
+        default: post
 
 concurrency:
   group: farehunter-blog
@@ -69,6 +75,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Select this week's deal
+        if: inputs.mode != 'rebuild'
         run: python scripts/generate_blog_post.py
 
       # Weekly refresh of the /business-class/ destination pages: typical
@@ -87,7 +94,7 @@ jobs:
             echo "new_post=false" >> "$GITHUB_OUTPUT"
             echo "No eligible deal this week (all remaining destinations still in their 6-week cooldown, or no deals at all) — no new post." >> "$GITHUB_STEP_SUMMARY"
           fi
-          if git status --porcelain src/content/blog src/data/destination-stats.json | grep -q .; then
+          if [ "${{ inputs.mode }}" = "rebuild" ] || git status --porcelain src/content/blog src/data/destination-stats.json | grep -q .; then
             echo "build=true" >> "$GITHUB_OUTPUT"
           else
             echo "build=false" >> "$GITHUB_OUTPUT"
@@ -132,8 +139,14 @@ jobs:
           git add -A public/ig/ 2>/dev/null || true
           # Pages this build changed, for IndexNow below.
           git diff --cached --name-only --diff-filter=AMR -- 'public-web/dist/*.html' > "$RUNNER_TEMP/changed-pages.txt"
+          if git diff --cached --quiet; then
+            echo "Build produced no changes — nothing to commit." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "${{ steps.check.outputs.new_post }}" = "true" ]; then
             git commit -m "content: weekly deal post $(date -u +'%Y-%m-%d')"
+          elif [ "${{ inputs.mode }}" = "rebuild" ]; then
+            git commit -m "content: rebuild site $(date -u +'%Y-%m-%d')"
           else
             git commit -m "content: weekly destination stats $(date -u +'%Y-%m-%d')"
           fi
